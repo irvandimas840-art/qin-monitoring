@@ -6,6 +6,7 @@ import {
 import {
   LayoutGrid, ClipboardList, LogOut, CheckSquare, ChevronDown,
   TrendingUp, Users, Package, CalendarDays, Trash2, Plus, Factory,
+  Copy, Check,
 } from "lucide-react";
 import { getData, setData } from "./storage";
 
@@ -112,6 +113,110 @@ function computeTotalButir(entry) {
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function formatDDMMYYYY(tanggalStr) {
+  const d = new Date(tanggalStr + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return tanggalStr;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+function formatDDMMYY(tanggalStr) {
+  const d = new Date(tanggalStr + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return tanggalStr;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}${mm}${String(d.getFullYear()).slice(-2)}`;
+}
+
+function capitalize(str) {
+  if (!str) return "";
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+}
+
+function zeroLabel(v) {
+  const n = toNumberOrNull(v);
+  return n === null ? 0 : n;
+}
+
+function dashLabel(v) {
+  const n = toNumberOrNull(v);
+  return n === null ? "-" : n;
+}
+
+/* ---- Generator teks laporan, format meniru lembar/WA asli ---- */
+function generateRisetText(e) {
+  const hari = (e.hari || hariFromTanggal(e.tanggal)).toUpperCase();
+  const tgl = formatDDMMYYYY(e.tanggal);
+  const rmdLines = RISET_RMD_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.rmd?.[item])} butir`).join("\n");
+  const mpdLines = RISET_MPD_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.mpd?.[item])} butir`).join("\n");
+  const wmLine = e.wmProduksi ? `Produksi \u27a1\ufe0f ${zeroLabel(e.wmButir)} butir` : "# (TIDAK PRODUKSI)";
+  return `DATA SAMPLING QAD-QIN
+Hari / tgl : ${hari},${tgl}
+Total personil : ${e.personil ?? 0} orang
+
+Riset shift : ${e.shift}
+  \u2713RMD
+${rmdLines}
+   \u2713MPD
+${mpdLines}
+\u2713WM H.JASRI
+${wmLine}`;
+}
+
+function generateVerifikasiText(e) {
+  const tgl = formatDDMMYYYY(e.tanggal);
+  const lines = VERIFIKASI_RMD_ITEMS.map((item) => `${item} : ${dashLabel(e.rmd?.[item])} Butir`).join("\n");
+  return `Data sampling QAD/QIN
+Hari/Tanggal : ${tgl}
+Total Personil : ${e.personil ?? 0} orang
+Verifikasi Shift : ${(e.shift || "").toLowerCase()}
+*RMD
+${lines}`;
+}
+
+function generateTotalText(e) {
+  const hari = capitalize(e.hari || hariFromTanggal(e.tanggal));
+  const ddmmyy = formatDDMMYY(e.tanggal);
+  return `Data sampling QAD-QIN
+Ttl Sample hr/tgl ${hari}/${ddmmyy}
+Total Personil ${e.personil ?? 0} orang
+RMD ${zeroLabel(e.rmdTotal)}
+Sampel timbang ${zeroLabel(e.sampelTimbang)}
+Sampel Sensory ${zeroLabel(e.sampelSensory)}
+Sampel Mingguan ${zeroLabel(e.sampelMingguan)}
+Sampel harian ${zeroLabel(e.sampelHarian)}`;
+}
+
+function generateReportText(entry) {
+  if (entry.type === "riset") return generateRisetText(entry);
+  if (entry.type === "verifikasi") return generateVerifikasiText(entry);
+  if (entry.type === "total") return generateTotalText(entry);
+  return "";
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 /* ---------------------------------------------------------------
@@ -418,6 +523,8 @@ function Dashboard({ entries, loading, onDelete, onNew }) {
             <StatCard icon={<CalendarDays size={17} />} label="Entri hari ini" value={stats.today} color={C.green} bg={C.greenSoft} />
           </div>
 
+          <DailyCopySection entries={entries} />
+
           <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 14, marginBottom: 22 }}>
             <ChartPanel title="Butir sampel per hari">
               {dailyChart.length ? (
@@ -536,6 +643,78 @@ function ChartPanel({ title, children }) {
   );
 }
 
+function DailyCopySection({ entries }) {
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [copiedId, setCopiedId] = useState(null);
+
+  const dayEntries = useMemo(
+    () => entries.filter((e) => e.tanggal === date).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)),
+    [entries, date]
+  );
+
+  async function handleCopy(entry) {
+    const ok = await copyText(generateReportText(entry));
+    if (ok) {
+      setCopiedId(entry.id);
+      setTimeout(() => setCopiedId(null), 1800);
+    }
+  }
+
+  return (
+    <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: 18, marginBottom: 22 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>Salin laporan harian</div>
+          <div style={{ fontSize: 12, color: C.inkSoft }}>Pilih tanggal untuk melihat & menyalin teks laporan siap kirim</div>
+        </div>
+        <input
+          type="date" className="focus-ring" value={date}
+          onChange={(e) => setDate(e.target.value)}
+          style={{ ...inputStyle, width: 170 }}
+        />
+      </div>
+
+      {dayEntries.length === 0 ? (
+        <div style={{ fontSize: 13, color: C.inkSoft, padding: "18px 0", textAlign: "center", border: `1px dashed ${C.line}`, borderRadius: 6 }}>
+          Tidak ada entri pada tanggal ini.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {dayEntries.map((entry) => {
+            const meta = REPORT_TYPES[entry.type];
+            const copied = copiedId === entry.id;
+            return (
+              <div key={entry.id} style={{ border: `1px solid ${C.line}`, borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: C.paper }}>
+                  <span style={{ background: meta.accentSoft, color: meta.accent, padding: "2px 8px", borderRadius: 4, fontSize: 11.5, fontWeight: 600 }}>
+                    {meta.label}{entry.shift ? ` \u00b7 ${entry.shift}` : ""}
+                  </span>
+                  <button
+                    onClick={() => handleCopy(entry)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6, border: "none",
+                      background: copied ? C.green : C.ink, color: "#fff", borderRadius: 5,
+                      padding: "6px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+                    }}
+                  >
+                    {copied ? (<><Check size={13} /> Disalin</>) : (<><Copy size={13} /> Salin</>)}
+                  </button>
+                </div>
+                <pre
+                  className="mono"
+                  style={{ margin: 0, padding: "12px 14px", fontSize: 12.5, whiteSpace: "pre-wrap", lineHeight: 1.6, color: C.ink, background: "#fff" }}
+                >
+                  {generateReportText(entry)}
+                </pre>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EmptyState({ onNew }) {
   return (
     <div style={{ background: C.panel, border: `1px dashed ${C.line}`, borderRadius: 8, padding: "60px 20px", textAlign: "center" }}>
@@ -597,8 +776,8 @@ function InputForm({ onSubmit }) {
 
   const previewTotal = computeTotalButir(
     type === "riset" ? { type, rmd: rmdRiset, mpd: mpdRiset, wmProduksi, wmButir }
-    : type === "verifikasi" ? { type, rmd: rmdVerif }
-    : { type, rmdTotal, sampelTimbang, sampelSensory, sampelMingguan, sampelHarian }
+      : type === "verifikasi" ? { type, rmd: rmdVerif }
+        : { type, rmdTotal, sampelTimbang, sampelSensory, sampelMingguan, sampelHarian }
   );
 
   return (
