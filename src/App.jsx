@@ -290,8 +290,8 @@ export default function App() {
         setFbUser(null);
         setProfile(null);
         try {
-          const snap = await getDocs(collection(db, "users"));
-          setNeedsBootstrap(snap.empty);
+          const metaSnap = await getDoc(doc(db, "meta", "setup"));
+          setNeedsBootstrap(!metaSnap.exists());
         } catch {
           setNeedsBootstrap(false);
         }
@@ -480,6 +480,7 @@ function BootstrapScreen({ onDone }) {
         createdAt: new Date().toISOString(),
         createdBy: username.trim(),
       });
+      await setDoc(doc(db, "meta", "setup"), { adminCreated: true, at: new Date().toISOString() });
       onDone();
     } catch (e2) {
       setErr(authErrorMessage(e2));
