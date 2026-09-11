@@ -1,24 +1,30 @@
-// Penyimpanan sederhana pakai localStorage browser.
-// Catatan: data ini HANYA tersimpan di browser & komputer masing-masing,
-// belum dibagi antar pengguna/tim. Saat sudah deploy dan butuh data
-// bersama (semua petugas melihat data yang sama), bagian ini perlu
-// diganti dengan panggilan ke database/backend (mis. Supabase, Firebase,
-// atau API sendiri).
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { db } from "./firebase";
+
+// Semua data disimpan sebagai satu dokumen per "key" di koleksi app_data,
+// dengan field `value` berisi data aslinya (array/object). Ini menjaga
+// interface getData/setData tetap sama seperti versi localStorage
+// sebelumnya, supaya App.jsx tidak perlu diubah.
 
 export async function getData(key) {
   try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
+    const ref = doc(db, "app_data", key);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+    return snap.data().value ?? null;
+  } catch (err) {
+    console.error("Firestore getData error:", err);
     return null;
   }
 }
 
 export async function setData(key, value) {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    const ref = doc(db, "app_data", key);
+    await setDoc(ref, { value, updatedAt: new Date().toISOString() });
     return true;
-  } catch {
+  } catch (err) {
+    console.error("Firestore setData error:", err);
     return false;
   }
 }

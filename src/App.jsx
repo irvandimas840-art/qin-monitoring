@@ -379,7 +379,7 @@ function LoginScreen({ onLogin }) {
           </button>
 
           <div style={{ fontSize: 11.5, color: C.inkSoft, marginTop: 14, lineHeight: 1.5 }}>
-            Saat ini data tersimpan di browser perangkat ini saja. Setelah terhubung ke database, data bisa dibagi antar petugas.
+            Data yang diisi tersimpan bersama dan terlihat oleh semua petugas yang membuka aplikasi ini.
           </div>
         </form>
       </div>
