@@ -366,7 +366,7 @@ export default function App() {
 
   const bgStyle = background
     ? {
-      backgroundImage: `linear-gradient(rgba(243,242,238,0.90), rgba(243,242,238,0.94)), url(${background})`,
+      backgroundImage: `linear-gradient(rgba(243,242,238,0.50), rgba(243,242,238,0.6)), url(${background})`,
       backgroundSize: "cover",
       backgroundPosition: "center",
       backgroundAttachment: "fixed",
