@@ -1,14 +1,35 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Hanya izinkan akses ke dokumen data sampling aplikasi ini.
-    // Saat ini dibuka bebas (tanpa login Firebase) karena aplikasi
-    // memakai login sederhana sendiri, bukan Firebase Auth.
-    // Rekomendasi: tambahkan Firebase Auth nanti lalu ganti "if true"
-    // menjadi "if request.auth != null" supaya hanya user yang login
-    // yang bisa baca/tulis.
+
+    // Profil akun (username, role). Password TIDAK disimpan di sini,
+    // itu dikelola terpisah & aman oleh Firebase Authentication.
+    match /users/{userId} {
+      allow read: if request.auth != null;
+
+      // Boleh membuat dokumen profil kalau:
+      // 1) itu punya diri sendiri (dipakai saat setup Admin pertama), ATAU
+      // 2) pembuatnya sudah berperan admin (boleh bikin peran apapun), ATAU
+      // 3) pembuatnya berperan supervisor DAN peran yang dibuat = anggota saja.
+      allow create: if request.auth != null && (
+        request.auth.uid == userId ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin" ||
+        (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "supervisor" &&
+          request.resource.data.role == "anggota"
+        )
+      );
+
+      allow update: if request.auth != null && request.auth.uid == userId;
+
+      // Hanya admin yang boleh menghapus profil akun.
+      allow delete: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    // Data sampling & pengaturan (background), hanya untuk yang sudah login.
     match /app_data/{document} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
 
     // Tolak semua path lain secara default.

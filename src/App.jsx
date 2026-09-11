@@ -6,9 +6,15 @@ import {
 import {
   LayoutGrid, ClipboardList, LogOut, CheckSquare, ChevronDown,
   TrendingUp, Users, Package, CalendarDays, Trash2, Plus, Factory,
-  Copy, Check,
+  Copy, Check, Settings, Image as ImageIcon, UserPlus, ShieldCheck, X,
 } from "lucide-react";
 import { getData, setData } from "./storage";
+import { auth, db } from "./firebase";
+import {
+  onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword,
+} from "firebase/auth";
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs } from "firebase/firestore";
+import { createUserAccount, usernameToEmail } from "./userAdmin";
 
 /* ---------------------------------------------------------------
    TOKENS
@@ -64,6 +70,13 @@ const SHIFTS = ["PAGI", "SIANG", "MALAM"];
 const HARI_ID = ["MINGGU", "SENIN", "SELASA", "RABU", "KAMIS", "JUMAT", "SABTU"];
 
 const STORAGE_KEY = "qad_qin_entries";
+const BACKGROUND_KEY = "app_background";
+
+const ROLES = {
+  admin: { label: "Admin", accent: "#2F6D4F" },
+  supervisor: { label: "Supervisor", accent: "#B8860B" },
+  anggota: { label: "Anggota", accent: "#5B6B72" },
+};
 
 /* ---------------------------------------------------------------
    HELPERS
@@ -219,24 +232,86 @@ async function copyText(text) {
   }
 }
 
+// Firestore membatasi ukuran dokumen ~1MB, jadi gambar background dikompres
+// & diperkecil dulu sebelum diubah ke base64 dan disimpan.
+function compressImageFile(file, maxDimension = 1600, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Gagal membaca file"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Gagal memuat gambar"));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDimension || height > maxDimension) {
+          const scale = maxDimension / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 /* ---------------------------------------------------------------
    ROOT APP
 ----------------------------------------------------------------*/
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [fbUser, setFbUser] = useState(null);
+  const [profile, setProfile] = useState(null); // {username, role}
+  const [needsBootstrap, setNeedsBootstrap] = useState(false);
+
   const [page, setPage] = useState("dashboard");
   const [entries, setEntries] = useState([]);
   const [loadingEntries, setLoadingEntries] = useState(true);
+  const [background, setBackground] = useState(null);
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
-    if (!user) return;
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        try {
+          const snap = await getDoc(doc(db, "users", u.uid));
+          setProfile(snap.exists() ? snap.data() : null);
+        } catch {
+          setProfile(null);
+        }
+        setFbUser(u);
+      } else {
+        setFbUser(null);
+        setProfile(null);
+        try {
+          const snap = await getDocs(collection(db, "users"));
+          setNeedsBootstrap(snap.empty);
+        } catch {
+          setNeedsBootstrap(false);
+        }
+      }
+      setAuthChecked(true);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (!fbUser) return;
     let mounted = true;
     (async () => {
       setLoadingEntries(true);
       try {
-        const saved = await getData(STORAGE_KEY);
-        if (mounted) setEntries(saved || []);
+        const [savedEntries, savedBg] = await Promise.all([getData(STORAGE_KEY), getData(BACKGROUND_KEY)]);
+        if (mounted) {
+          setEntries(savedEntries || []);
+          setBackground(savedBg || null);
+        }
       } catch {
         if (mounted) setEntries([]);
       } finally {
@@ -244,7 +319,7 @@ export default function App() {
       }
     })();
     return () => { mounted = false; };
-  }, [user]);
+  }, [fbUser]);
 
   function showToast(msg, tone = "ok") {
     setToast({ msg, tone });
@@ -255,14 +330,14 @@ export default function App() {
     setEntries(nextEntries);
     try {
       const ok = await setData(STORAGE_KEY, nextEntries);
-      if (!ok) showToast("Gagal menyimpan data di browser ini.", "error");
+      if (!ok) showToast("Gagal menyimpan data.", "error");
     } catch {
-      showToast("Gagal menyimpan data di browser ini.", "error");
+      showToast("Gagal menyimpan data.", "error");
     }
   }
 
   async function addEntry(entry) {
-    const full = { ...entry, id: uid(), createdBy: user?.name || "-", createdAt: new Date().toISOString() };
+    const full = { ...entry, id: uid(), createdBy: profile?.username || "-", createdAt: new Date().toISOString() };
     full.totalButir = computeTotalButir(full);
     await persist([full, ...entries]);
     showToast("Data sampling tersimpan.");
@@ -274,8 +349,40 @@ export default function App() {
     showToast("Data dihapus.", "warn");
   }
 
+  async function updateBackground(dataUrl) {
+    setBackground(dataUrl);
+    try {
+      const ok = await setData(BACKGROUND_KEY, dataUrl);
+      showToast(ok ? "Background diperbarui." : "Gagal menyimpan background.", ok ? "ok" : "error");
+    } catch {
+      showToast("Gagal menyimpan background.", "error");
+    }
+  }
+
+  async function handleLogout() {
+    await signOut(auth);
+    setPage("dashboard");
+  }
+
+  const bgStyle = background
+    ? {
+      backgroundImage: `linear-gradient(rgba(243,242,238,0.90), rgba(243,242,238,0.94)), url(${background})`,
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+      backgroundAttachment: "fixed",
+    }
+    : { background: C.paper };
+
+  if (!authChecked) {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", color: C.inkSoft, fontFamily: "Inter, sans-serif" }}>
+        Memuat...
+      </div>
+    );
+  }
+
   return (
-    <div style={{ fontFamily: "Inter, sans-serif", background: C.paper, minHeight: "100vh", color: C.ink }}>
+    <div style={{ fontFamily: "Inter, sans-serif", ...bgStyle, minHeight: "100vh", color: C.ink }}>
       <style>{`
         ${FONT_IMPORT}
         .disp { font-family: 'Oswald', sans-serif; letter-spacing: 0.01em; }
@@ -286,16 +393,30 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background: ${C.line}; border-radius: 4px; }
       `}</style>
 
-      {!user ? (
-        <LoginScreen onLogin={setUser} />
+      {!fbUser ? (
+        needsBootstrap ? (
+          <BootstrapScreen onDone={() => setNeedsBootstrap(false)} />
+        ) : (
+          <LoginScreen />
+        )
+      ) : !profile ? (
+        <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 20, textAlign: "center" }}>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Profil akun tidak ditemukan.</div>
+            <div style={{ fontSize: 13, color: C.inkSoft, marginBottom: 16 }}>Hubungi admin untuk memeriksa akun ini.</div>
+            <button onClick={handleLogout} style={{ background: C.ink, color: "#fff", border: "none", borderRadius: 6, padding: "9px 16px", cursor: "pointer" }}>Keluar</button>
+          </div>
+        </div>
       ) : (
         <>
-          <TopBar user={user} page={page} setPage={setPage} onLogout={() => setUser(null)} />
+          <TopBar profile={profile} page={page} setPage={setPage} onLogout={handleLogout} />
           <main style={{ maxWidth: 1120, margin: "0 auto", padding: "28px 20px 60px" }}>
-            {page === "dashboard" ? (
+            {page === "dashboard" && (
               <Dashboard entries={entries} loading={loadingEntries} onDelete={deleteEntry} onNew={() => setPage("input")} />
-            ) : (
-              <InputForm onSubmit={addEntry} />
+            )}
+            {page === "input" && <InputForm onSubmit={addEntry} />}
+            {page === "settings" && (
+              <SettingsPage profile={profile} background={background} onUpdateBackground={updateBackground} showToast={showToast} />
             )}
           </main>
         </>
@@ -319,67 +440,162 @@ export default function App() {
 }
 
 /* ---------------------------------------------------------------
-   LOGIN
+   AUTH ERROR MESSAGES
 ----------------------------------------------------------------*/
-function LoginScreen({ onLogin }) {
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("Operator QC");
+function authErrorMessage(err) {
+  const code = err?.code || "";
+  if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) {
+    return "Username atau password salah.";
+  }
+  if (code.includes("email-already-in-use")) return "Username sudah dipakai, coba nama lain.";
+  if (code.includes("weak-password")) return "Password minimal 6 karakter.";
+  if (code.includes("too-many-requests")) return "Terlalu banyak percobaan, coba lagi sebentar.";
+  if (code.includes("network-request-failed")) return "Gagal terhubung ke server, cek koneksi internet.";
+  return "Terjadi kesalahan, coba lagi.";
+}
 
-  function submit(e) {
+/* ---------------------------------------------------------------
+   BOOTSTRAP (setup akun admin pertama kali)
+----------------------------------------------------------------*/
+function BootstrapScreen({ onDone }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(e) {
     e.preventDefault();
-    if (!name.trim()) return;
-    onLogin({ name: name.trim(), role });
+    setErr("");
+    if (!username.trim() || !password) return;
+    if (password !== confirm) { setErr("Konfirmasi password tidak sama."); return; }
+    if (password.length < 6) { setErr("Password minimal 6 karakter."); return; }
+    setLoading(true);
+    try {
+      const email = usernameToEmail(username);
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      await setDoc(doc(db, "users", cred.user.uid), {
+        username: username.trim(),
+        role: "admin",
+        createdAt: new Date().toISOString(),
+        createdBy: username.trim(),
+      });
+      onDone();
+    } catch (e2) {
+      setErr(authErrorMessage(e2));
+      setLoading(false);
+    }
   }
 
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 400 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 26, justifyContent: "center" }}>
-          <div style={{ width: 40, height: 40, borderRadius: 6, background: C.green, display: "grid", placeItems: "center" }}>
-            <Factory size={22} color="#fff" />
-          </div>
-          <div>
-            <div className="disp" style={{ fontSize: 20, fontWeight: 600, lineHeight: 1 }}>QAD–QIN</div>
-            <div style={{ fontSize: 12, color: C.inkSoft }}>Monitoring Sampling Produksi</div>
-          </div>
-        </div>
-
+        <BrandHeader />
         <form onSubmit={submit} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: 28 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+            <ShieldCheck size={18} color={C.green} />
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Setup akun Admin pertama</div>
+          </div>
           <div style={{ fontSize: 13, color: C.inkSoft, marginBottom: 18, lineHeight: 1.5 }}>
-            Masuk dengan nama petugas untuk mengisi dan memantau data sampling harian.
+            Belum ada akun sama sekali di aplikasi ini. Buat akun Admin pertama untuk mulai — akun ini nanti bisa menambahkan Supervisor dan Anggota lain.
           </div>
 
-          <label style={labelStyle}>Nama petugas</label>
-          <input
-            className="focus-ring"
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="cth. Dewi Aryani"
-            style={inputStyle}
-          />
+          <label style={labelStyle}>Username</label>
+          <input className="focus-ring" autoFocus value={username} onChange={(e) => setUsername(e.target.value)} placeholder="cth. dimas" style={inputStyle} />
 
-          <label style={{ ...labelStyle, marginTop: 14 }}>Peran</label>
-          <select className="focus-ring" value={role} onChange={(e) => setRole(e.target.value)} style={inputStyle}>
-            <option>Operator QC</option>
-            <option>Supervisor QC</option>
-            <option>Admin QAD-QIN</option>
-          </select>
+          <label style={{ ...labelStyle, marginTop: 14 }}>Password</label>
+          <input className="focus-ring" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Minimal 6 karakter" style={inputStyle} />
+
+          <label style={{ ...labelStyle, marginTop: 14 }}>Konfirmasi password</label>
+          <input className="focus-ring" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} style={inputStyle} />
+
+          {err && <div style={{ color: C.danger, fontSize: 12.5, marginTop: 10 }}>{err}</div>}
 
           <button
             type="submit"
-            disabled={!name.trim()}
+            disabled={loading || !username.trim() || !password}
             style={{
               marginTop: 20, width: "100%", padding: "11px 0", border: "none", borderRadius: 6,
-              background: name.trim() ? C.green : C.line, color: "#fff", fontWeight: 600, fontSize: 14,
-              cursor: name.trim() ? "pointer" : "not-allowed",
+              background: loading ? C.line : C.green, color: "#fff", fontWeight: 600, fontSize: 14,
+              cursor: loading ? "not-allowed" : "pointer",
             }}
           >
-            Masuk
+            {loading ? "Membuat akun..." : "Buat akun Admin"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function BrandHeader() {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 26, justifyContent: "center" }}>
+      <div style={{ width: 40, height: 40, borderRadius: 6, background: C.green, display: "grid", placeItems: "center" }}>
+        <Factory size={22} color="#fff" />
+      </div>
+      <div>
+        <div className="disp" style={{ fontSize: 20, fontWeight: 600, lineHeight: 1 }}>QAD–QIN</div>
+        <div style={{ fontSize: 12, color: C.inkSoft }}>Monitoring Sampling Produksi</div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   LOGIN
+----------------------------------------------------------------*/
+function LoginScreen() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setErr("");
+    if (!username.trim() || !password) return;
+    setLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, usernameToEmail(username), password);
+    } catch (e2) {
+      setErr(authErrorMessage(e2));
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 400 }}>
+        <BrandHeader />
+
+        <form onSubmit={submit} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: 28 }}>
+          <div style={{ fontSize: 13, color: C.inkSoft, marginBottom: 18, lineHeight: 1.5 }}>
+            Masuk dengan username & password akun kamu.
+          </div>
+
+          <label style={labelStyle}>Username</label>
+          <input className="focus-ring" autoFocus value={username} onChange={(e) => setUsername(e.target.value)} placeholder="cth. dimas" style={inputStyle} />
+
+          <label style={{ ...labelStyle, marginTop: 14 }}>Password</label>
+          <input className="focus-ring" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+
+          {err && <div style={{ color: C.danger, fontSize: 12.5, marginTop: 10 }}>{err}</div>}
+
+          <button
+            type="submit"
+            disabled={loading || !username.trim() || !password}
+            style={{
+              marginTop: 20, width: "100%", padding: "11px 0", border: "none", borderRadius: 6,
+              background: loading ? C.line : C.green, color: "#fff", fontWeight: 600, fontSize: 14,
+              cursor: loading ? "not-allowed" : "pointer",
+            }}
+          >
+            {loading ? "Memeriksa..." : "Masuk"}
           </button>
 
           <div style={{ fontSize: 11.5, color: C.inkSoft, marginTop: 14, lineHeight: 1.5 }}>
-            Data yang diisi tersimpan bersama dan terlihat oleh semua petugas yang membuka aplikasi ini.
+            Belum punya akun? Minta Admin atau Supervisor untuk membuatkan akun kamu.
           </div>
         </form>
       </div>
@@ -396,10 +612,12 @@ const inputStyle = {
 /* ---------------------------------------------------------------
    TOP BAR
 ----------------------------------------------------------------*/
-function TopBar({ user, page, setPage, onLogout }) {
+function TopBar({ profile, page, setPage, onLogout }) {
+  const roleMeta = ROLES[profile.role] || ROLES.anggota;
+  const canSeeSettings = profile.role === "admin" || profile.role === "supervisor";
   return (
     <div style={{ background: C.panel, borderBottom: `1px solid ${C.line}`, position: "sticky", top: 0, zIndex: 20 }}>
-      <div style={{ maxWidth: 1120, margin: "0 auto", padding: "0 20px", display: "flex", alignItems: "center", height: 60, gap: 20 }}>
+      <div style={{ maxWidth: 1120, margin: "0 auto", padding: "0 20px", display: "flex", alignItems: "center", height: 60, gap: 20, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div style={{ width: 30, height: 30, borderRadius: 6, background: C.green, display: "grid", placeItems: "center", flexShrink: 0 }}>
             <Factory size={16} color="#fff" />
@@ -410,12 +628,15 @@ function TopBar({ user, page, setPage, onLogout }) {
         <nav style={{ display: "flex", gap: 4, marginLeft: 8 }}>
           <NavBtn active={page === "dashboard"} onClick={() => setPage("dashboard")} icon={<LayoutGrid size={15} />} label="Dashboard" />
           <NavBtn active={page === "input"} onClick={() => setPage("input")} icon={<ClipboardList size={15} />} label="Input Data" />
+          {canSeeSettings && (
+            <NavBtn active={page === "settings"} onClick={() => setPage("settings")} icon={<Settings size={15} />} label="Pengaturan" />
+          )}
         </nav>
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.2 }}>{user.name}</div>
-            <div style={{ fontSize: 11, color: C.inkSoft, lineHeight: 1.2 }}>{user.role}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.2 }}>{profile.username}</div>
+            <div style={{ fontSize: 11, color: roleMeta.accent, lineHeight: 1.2, fontWeight: 600 }}>{roleMeta.label}</div>
           </div>
           <button
             onClick={onLogout}
@@ -442,6 +663,245 @@ function NavBtn({ active, onClick, icon, label }) {
     >
       {icon}{label}
     </button>
+  );
+}
+
+/* ---------------------------------------------------------------
+   SETTINGS: KELOLA AKUN + BACKGROUND
+----------------------------------------------------------------*/
+function SettingsPage({ profile, background, onUpdateBackground, showToast }) {
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <div className="disp" style={{ fontSize: 24, fontWeight: 600 }}>Pengaturan</div>
+        <div style={{ fontSize: 13, color: C.inkSoft, marginTop: 2 }}>Kelola akun tim{profile.role === "admin" ? " dan tampilan aplikasi" : ""}.</div>
+      </div>
+
+      <UserManagement profile={profile} showToast={showToast} />
+
+      {profile.role === "admin" && (
+        <BackgroundSettings background={background} onUpdateBackground={onUpdateBackground} showToast={showToast} />
+      )}
+    </div>
+  );
+}
+
+function UserManagement({ profile, showToast }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("anggota");
+  const [saving, setSaving] = useState(false);
+  const [formErr, setFormErr] = useState("");
+
+  const assignableRoles = profile.role === "admin" ? ["anggota", "supervisor", "admin"] : ["anggota"];
+
+  async function loadUsers() {
+    setLoading(true);
+    try {
+      const snap = await getDocs(collection(db, "users"));
+      setUsers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch {
+      setUsers([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { loadUsers(); }, []);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    setFormErr("");
+    if (!username.trim() || !password) return;
+    if (password.length < 6) { setFormErr("Password minimal 6 karakter."); return; }
+    setSaving(true);
+    try {
+      const newUid = await createUserAccount(username, password);
+      await setDoc(doc(db, "users", newUid), {
+        username: username.trim(),
+        role,
+        createdAt: new Date().toISOString(),
+        createdBy: profile.username,
+      });
+      setUsername(""); setPassword(""); setRole("anggota"); setShowForm(false);
+      showToast("Akun baru berhasil dibuat.");
+      loadUsers();
+    } catch (err) {
+      setFormErr(authErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(u) {
+    if (u.username === profile.username) return;
+    if (!confirm(`Hapus profil akun "${u.username}"? (Login Firebase-nya perlu dihapus manual lewat Firebase Console jika perlu.)`)) return;
+    try {
+      await deleteDoc(doc(db, "users", u.id));
+      showToast("Profil akun dihapus.", "warn");
+      loadUsers();
+    } catch {
+      showToast("Gagal menghapus akun.", "error");
+    }
+  }
+
+  return (
+    <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: 18, marginBottom: 22 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>Kelola Akun</div>
+          <div style={{ fontSize: 12, color: C.inkSoft }}>
+            {profile.role === "admin" ? "Tambahkan Anggota, Supervisor, atau Admin lain." : "Tambahkan Anggota baru ke tim."}
+          </div>
+        </div>
+        <button
+          onClick={() => setShowForm((v) => !v)}
+          style={{ display: "flex", alignItems: "center", gap: 6, background: C.green, color: "#fff", border: "none", borderRadius: 6, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+        >
+          <UserPlus size={15} /> Tambah Akun
+        </button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={handleAdd} style={{ border: `1px solid ${C.line}`, borderRadius: 6, padding: 16, marginBottom: 16, background: C.paper }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px,1fr))", gap: 12 }}>
+            <div>
+              <label style={labelStyle}>Username</label>
+              <input className="focus-ring" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="cth. siti" style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Password</label>
+              <input className="focus-ring" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Minimal 6 karakter" style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Peran</label>
+              <select className="focus-ring" value={role} onChange={(e) => setRole(e.target.value)} style={inputStyle}>
+                {assignableRoles.map((r) => <option key={r} value={r}>{ROLES[r].label}</option>)}
+              </select>
+            </div>
+          </div>
+          {formErr && <div style={{ color: C.danger, fontSize: 12.5, marginTop: 10 }}>{formErr}</div>}
+          <button
+            type="submit"
+            disabled={saving || !username.trim() || !password}
+            style={{ marginTop: 12, background: saving ? C.line : C.ink, color: "#fff", border: "none", borderRadius: 6, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer" }}
+          >
+            {saving ? "Menyimpan..." : "Simpan akun"}
+          </button>
+        </form>
+      )}
+
+      {loading ? (
+        <div style={{ fontSize: 13, color: C.inkSoft, padding: "16px 0", textAlign: "center" }}>Memuat daftar akun...</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: C.paper }}>
+                {["Username", "Peran", "Dibuat oleh", ""].map((h) => <th key={h} style={thStyle}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => {
+                const roleMeta = ROLES[u.role] || ROLES.anggota;
+                return (
+                  <tr key={u.id} style={{ borderTop: `1px solid ${C.line}` }}>
+                    <td style={tdStyle}>{u.username}{u.username === profile.username && <span style={{ color: C.inkSoft }}> (kamu)</span>}</td>
+                    <td style={tdStyle}>
+                      <span style={{ background: `${roleMeta.accent}1A`, color: roleMeta.accent, padding: "2px 8px", borderRadius: 4, fontSize: 11.5, fontWeight: 600 }}>
+                        {roleMeta.label}
+                      </span>
+                    </td>
+                    <td style={tdStyle}>{u.createdBy || "-"}</td>
+                    <td style={{ ...tdStyle, textAlign: "right" }}>
+                      {profile.role === "admin" && u.username !== profile.username && (
+                        <button onClick={() => handleDelete(u)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.inkSoft }} title="Hapus profil akun">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BackgroundSettings({ background, onUpdateBackground, showToast }) {
+  const [preview, setPreview] = useState(background);
+  const [processing, setProcessing] = useState(false);
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setProcessing(true);
+    try {
+      const dataUrl = await compressImageFile(file);
+      setPreview(dataUrl);
+    } catch {
+      showToast("Gagal memproses gambar.", "error");
+    } finally {
+      setProcessing(false);
+      e.target.value = "";
+    }
+  }
+
+  async function handleSave() {
+    await onUpdateBackground(preview);
+  }
+
+  async function handleRemove() {
+    setPreview(null);
+    await onUpdateBackground(null);
+  }
+
+  return (
+    <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <ImageIcon size={16} color={C.ink} />
+        <div style={{ fontWeight: 600, fontSize: 14 }}>Background Aplikasi</div>
+      </div>
+      <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 14 }}>
+        Berlaku untuk semua orang yang membuka aplikasi ini (tersimpan di database bersama).
+      </div>
+
+      <div
+        style={{
+          height: 140, borderRadius: 6, border: `1px dashed ${C.line}`, marginBottom: 14,
+          backgroundImage: preview ? `url(${preview})` : "none",
+          backgroundSize: "cover", backgroundPosition: "center",
+          display: preview ? "block" : "grid", placeItems: "center", color: C.inkSoft, fontSize: 12.5,
+        }}
+      >
+        {!preview && "Belum ada background"}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <label style={{ background: C.ink, color: "#fff", borderRadius: 6, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+          {processing ? "Memproses..." : "Pilih gambar"}
+          <input type="file" accept="image/*" onChange={handleFile} disabled={processing} style={{ display: "none" }} />
+        </label>
+        <button
+          onClick={handleSave}
+          disabled={!preview || processing}
+          style={{ background: preview ? C.green : C.line, color: "#fff", border: "none", borderRadius: 6, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: preview ? "pointer" : "not-allowed" }}
+        >
+          Simpan sebagai background
+        </button>
+        {background && (
+          <button onClick={handleRemove} style={{ background: "transparent", color: C.danger, border: `1px solid ${C.danger}`, borderRadius: 6, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            Hapus background
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
