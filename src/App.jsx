@@ -28,8 +28,8 @@ const C = {
   ink: "#1E2420",
   inkSoft: "#5B6560",
   line: "#DDE0DA",
-  green: "#2F6D4F",
-  greenSoft: "#E4EEE7",
+  green: "#C2255C",
+  greenSoft: "#FBE4ED",
   amber: "#B8860B",
   amberSoft: "#F6EDD8",
   slate: "#5B6B72",
@@ -73,7 +73,7 @@ const STORAGE_KEY = "qad_qin_entries";
 const BACKGROUND_KEY = "app_background";
 
 const ROLES = {
-  admin: { label: "Admin", accent: "#2F6D4F" },
+  admin: { label: "Admin", accent: "#C2255C" },
   supervisor: { label: "Supervisor", accent: "#B8860B" },
   anggota: { label: "Anggota", accent: "#5B6B72" },
 };
@@ -366,7 +366,7 @@ export default function App() {
 
   const bgStyle = background
     ? {
-      backgroundImage: `linear-gradient(rgba(243,242,238,0.50), rgba(243,242,238,0.6)), url(${background})`,
+      backgroundImage: `linear-gradient(rgba(243,242,238,0.90), rgba(243,242,238,0.94)), url(${background})`,
       backgroundSize: "cover",
       backgroundPosition: "center",
       backgroundAttachment: "fixed",
@@ -391,6 +391,24 @@ export default function App() {
         .focus-ring:focus { outline: none; box-shadow: 0 0 0 3px ${C.greenSoft}; border-color: ${C.green}; }
         ::-webkit-scrollbar { height: 8px; width: 8px; }
         ::-webkit-scrollbar-thumb { background: ${C.line}; border-radius: 4px; }
+
+        .main-content { padding: 28px 20px 60px; }
+        .topbar-row { flex-wrap: wrap; padding: 10px 20px; min-height: 60px; row-gap: 8px; }
+        .nav-row { flex-wrap: wrap; }
+        .chart-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; margin-bottom: 22px; }
+
+        @media (max-width: 760px) {
+          .chart-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 640px) {
+          .topbar-row { justify-content: center; }
+          .topbar-row > div:first-child { flex: 1 1 auto; }
+          .nav-row { justify-content: center; width: 100%; order: 3; }
+          .user-info-row { margin-left: 0 !important; width: 100%; justify-content: space-between; order: 2; }
+        }
+        @media (max-width: 480px) {
+          .main-content { padding: 16px 12px 40px; }
+        }
       `}</style>
 
       {!fbUser ? (
@@ -410,7 +428,7 @@ export default function App() {
       ) : (
         <>
           <TopBar profile={profile} page={page} setPage={setPage} onLogout={handleLogout} />
-          <main style={{ maxWidth: 1120, margin: "0 auto", padding: "28px 20px 60px" }}>
+          <main className="main-content" style={{ maxWidth: 1120, margin: "0 auto" }}>
             {page === "dashboard" && (
               <Dashboard entries={entries} loading={loadingEntries} onDelete={deleteEntry} onNew={() => setPage("input")} />
             )}
@@ -618,7 +636,7 @@ function TopBar({ profile, page, setPage, onLogout }) {
   const canSeeSettings = profile.role === "admin" || profile.role === "supervisor";
   return (
     <div style={{ background: C.panel, borderBottom: `1px solid ${C.line}`, position: "sticky", top: 0, zIndex: 20 }}>
-      <div style={{ maxWidth: 1120, margin: "0 auto", padding: "0 20px", display: "flex", alignItems: "center", height: 60, gap: 20, flexWrap: "wrap" }}>
+      <div className="topbar-row" style={{ maxWidth: 1120, margin: "0 auto", display: "flex", alignItems: "center", gap: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div style={{ width: 30, height: 30, borderRadius: 6, background: C.green, display: "grid", placeItems: "center", flexShrink: 0 }}>
             <Factory size={16} color="#fff" />
@@ -626,7 +644,7 @@ function TopBar({ profile, page, setPage, onLogout }) {
           <div className="disp" style={{ fontSize: 16, fontWeight: 600 }}>QAD–QIN</div>
         </div>
 
-        <nav style={{ display: "flex", gap: 4, marginLeft: 8 }}>
+        <nav className="nav-row" style={{ display: "flex", gap: 4, marginLeft: 8 }}>
           <NavBtn active={page === "dashboard"} onClick={() => setPage("dashboard")} icon={<LayoutGrid size={15} />} label="Dashboard" />
           <NavBtn active={page === "input"} onClick={() => setPage("input")} icon={<ClipboardList size={15} />} label="Input Data" />
           {canSeeSettings && (
@@ -634,7 +652,7 @@ function TopBar({ profile, page, setPage, onLogout }) {
           )}
         </nav>
 
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
+        <div className="user-info-row" style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.2 }}>{profile.username}</div>
             <div style={{ fontSize: 11, color: roleMeta.accent, lineHeight: 1.2, fontWeight: 600 }}>{roleMeta.label}</div>
@@ -986,7 +1004,7 @@ function Dashboard({ entries, loading, onDelete, onNew }) {
 
           <DailyCopySection entries={entries} />
 
-          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 14, marginBottom: 22 }}>
+          <div className="chart-grid">
             <ChartPanel title="Butir sampel per hari">
               {dailyChart.length ? (
                 <ResponsiveContainer width="100%" height={230}>
