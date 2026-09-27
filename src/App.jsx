@@ -89,8 +89,21 @@ function toNumberOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizeItemValue(v) {
+  if (v && typeof v === "object") return { butir: v.butir ?? "", ket: v.ket ?? "" };
+  return { butir: v ?? "", ket: "" };
+}
+
+function getButir(v) {
+  return toNumberOrNull(normalizeItemValue(v).butir);
+}
+
+function getKeterangan(v) {
+  return normalizeItemValue(v).ket;
+}
+
 function sumValues(obj) {
-  return Object.values(obj || {}).reduce((acc, v) => acc + (toNumberOrNull(v) || 0), 0);
+  return Object.values(obj || {}).reduce((acc, v) => acc + (getButir(v) || 0), 0);
 }
 
 function hariFromTanggal(tanggalStr) {
@@ -133,13 +146,23 @@ function capitalize(str) {
 }
 
 function zeroLabel(v) {
-  const n = toNumberOrNull(v);
+  const n = getButir(v);
   return n === null ? 0 : n;
 }
 
 function dashLabel(v) {
-  const n = toNumberOrNull(v);
+  const n = getButir(v);
   return n === null ? "-" : n;
+}
+
+function itemLineArrow(item, v) {
+  const ket = getKeterangan(v);
+  return `${item} \u27a1\ufe0f ${zeroLabel(v)} butir${ket ? ` \u2014 ${ket}` : ""}`;
+}
+
+function itemLineColon(item, v) {
+  const ket = getKeterangan(v);
+  return `${item} : ${dashLabel(v)} Butir${ket ? ` \u2014 ${ket}` : ""}`;
 }
 
 function computeTotalButir(entry) {
@@ -171,10 +194,10 @@ function computeTotalButir(entry) {
 function generateRisetText(e) {
   const hari = (e.hari || hariFromTanggal(e.tanggal)).toUpperCase();
   const tgl = formatDDMMYYYY(e.tanggal);
-  const rmdLines = RISET_RMD_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.rmd?.[item])} butir`).join("\n");
-  const rmmLines = RISET_RMM_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.rmm?.[item])} butir`).join("\n");
-  const incomingLines = RISET_INCOMING_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.incoming?.[item])} butir`).join("\n");
-  const mpdLines = RISET_MPD_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.mpd?.[item])} butir`).join("\n");
+  const rmdLines = RISET_RMD_ITEMS.map((item) => itemLineArrow(item, e.rmd?.[item])).join("\n");
+  const rmmLines = RISET_RMM_ITEMS.map((item) => itemLineArrow(item, e.rmm?.[item])).join("\n");
+  const incomingLines = RISET_INCOMING_ITEMS.map((item) => itemLineArrow(item, e.incoming?.[item])).join("\n");
+  const mpdLines = RISET_MPD_ITEMS.map((item) => itemLineArrow(item, e.mpd?.[item])).join("\n");
   const wmLine = e.wmProduksi ? `Produksi \u27a1\ufe0f ${zeroLabel(e.wmButir)} butir` : "# (TIDAK PRODUKSI)";
   return `DATA SAMPLING QAD-QIN
 Hari / tgl : ${hari},${tgl}
@@ -195,8 +218,8 @@ ${wmLine}`;
 
 function generateVerifikasiText(e) {
   const tgl = formatDDMMYYYY(e.tanggal);
-  const rmdLines = VERIFIKASI_RMD_ITEMS.map((item) => `${item} : ${dashLabel(e.rmd?.[item])} Butir`).join("\n");
-  const mpdLines = VERIFIKASI_MPD_ITEMS.map((item) => `${item} : ${dashLabel(e.mpd?.[item])} Butir`).join("\n");
+  const rmdLines = VERIFIKASI_RMD_ITEMS.map((item) => itemLineColon(item, e.rmd?.[item])).join("\n");
+  const mpdLines = VERIFIKASI_MPD_ITEMS.map((item) => itemLineColon(item, e.mpd?.[item])).join("\n");
   return `Data sampling QAD/QIN
 Hari/Tanggal : ${tgl}
 Total Personil : ${e.personil ?? 0} orang
@@ -1469,24 +1492,37 @@ function SectionHeader({ accent, label }) {
 
 function ItemGrid({ items, values, setValues, allowDash }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 10, marginBottom: 6 }}>
-      {items.map((item) => (
-        <div key={item} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: `1px solid ${C.line}`, borderRadius: 6, padding: "8px 10px" }}>
-          <span style={{ fontSize: 13, color: C.ink, marginRight: 8 }}>{item}</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px,1fr))", gap: 10, marginBottom: 6 }}>
+      {items.map((item) => {
+        const current = normalizeItemValue(values[item]);
+        return (
+          <div key={item} style={{ border: `1px solid ${C.line}`, borderRadius: 6, padding: "8px 10px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
+              <span style={{ fontSize: 13, color: C.ink }}>{item}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                <input
+                  className="focus-ring mono"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder={allowDash ? "-" : "0"}
+                  value={current.butir}
+                  onChange={(e) => setValues((prev) => ({ ...prev, [item]: { ...normalizeItemValue(prev[item]), butir: e.target.value } }))}
+                  style={{ width: 60, textAlign: "right", padding: "5px 8px", border: `1px solid ${C.line}`, borderRadius: 5, fontSize: 13 }}
+                />
+                <span style={{ fontSize: 11.5, color: C.inkSoft }}>butir</span>
+              </div>
+            </div>
             <input
-              className="focus-ring mono"
+              className="focus-ring"
               type="text"
-              inputMode="numeric"
-              placeholder={allowDash ? "-" : "0"}
-              value={values[item] ?? ""}
-              onChange={(e) => setValues((v) => ({ ...v, [item]: e.target.value }))}
-              style={{ width: 70, textAlign: "right", padding: "5px 8px", border: `1px solid ${C.line}`, borderRadius: 5, fontSize: 13 }}
+              placeholder="Keterangan (opsional)"
+              value={current.ket}
+              onChange={(e) => setValues((prev) => ({ ...prev, [item]: { ...normalizeItemValue(prev[item]), ket: e.target.value } }))}
+              style={{ width: "100%", padding: "5px 8px", border: `1px solid ${C.line}`, borderRadius: 5, fontSize: 12.5, boxSizing: "border-box" }}
             />
-            <span style={{ fontSize: 11.5, color: C.inkSoft }}>butir</span>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
