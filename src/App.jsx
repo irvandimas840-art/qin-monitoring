@@ -18,9 +18,6 @@ import { createUserAccount, usernameToEmail } from "./userAdmin";
 
 /* ---------------------------------------------------------------
    TOKENS
-   Palet & tipografi mengikuti nuansa panel kontrol pabrik/QC:
-   hijau lolos-QC sebagai warna kerja utama, kertas abu-hangat
-   sebagai dasar, kuning peringatan untuk aksen sekunder.
 ----------------------------------------------------------------*/
 const C = {
   paper: "#F3F2EE",
@@ -43,14 +40,14 @@ const REPORT_TYPES = {
   riset: {
     key: "riset",
     label: "Riset Shift",
-    sub: "RMD / MPD / WM",
+    sub: "RMD / RMM Nanas / Incoming / MPD / WM",
     accent: C.green,
     accentSoft: C.greenSoft,
   },
   verifikasi: {
     key: "verifikasi",
     label: "Verifikasi Shift",
-    sub: "RMD (RMR / MP / NST)",
+    sub: "RMD & MPD",
     accent: C.amber,
     accentSoft: C.amberSoft,
   },
@@ -63,9 +60,14 @@ const REPORT_TYPES = {
   },
 };
 
-const RISET_RMD_ITEMS = ["KARA", "KJB", "RSUP", "RSTM SP 3 MIX", "GHS 1", "GHS 2", "KB B."];
-const RISET_MPD_ITEMS = ["KARA NUTS", "NST HYBRIDA"];
-const VERIFIKASI_RMD_ITEMS = ["RMR Kara Laut", "RMR Kanal", "RMR GHS", "NST Baru", "MP Kara", "MP Hybrida", "NST Lama"];
+const RISET_RMD_ITEMS = ["RSUP Organic", "RSTM", "GHS1", "GHS2", "KB B Kara", "KB B Hybrida"];
+const RISET_RMM_ITEMS = ["DKP", "Air Kelapa"];
+const RISET_INCOMING_ITEMS = ["DKP Beku"];
+const RISET_MPD_ITEMS = ["Kara Daily Storage/NST Kara", "NST Hybrida", "NST Organic", "KB B Kara", "KB B Hybrida", "KB B MP2"];
+
+const VERIFIKASI_RMD_ITEMS = ["RMR Kara Laut", "RMR Kanal/Hybrida", "RMR GHS", "NST Baru"];
+const VERIFIKASI_MPD_ITEMS = ["MP Kara", "MP Hybrida", "NST Lama"];
+
 const SHIFTS = ["PAGI", "SIANG", "MALAM"];
 const HARI_ID = ["MINGGU", "SENIN", "SELASA", "RABU", "KAMIS", "JUMAT", "SABTU"];
 
@@ -105,25 +107,6 @@ function formatTanggalPendek(tanggalStr) {
   return d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-function computeTotalButir(entry) {
-  if (entry.type === "riset") {
-    return sumValues(entry.rmd) + sumValues(entry.mpd) + (entry.wmProduksi ? toNumberOrNull(entry.wmButir) || 0 : 0);
-  }
-  if (entry.type === "verifikasi") {
-    return sumValues(entry.rmd);
-  }
-  if (entry.type === "total") {
-    return (
-      (toNumberOrNull(entry.rmdTotal) || 0) +
-      (toNumberOrNull(entry.sampelTimbang) || 0) +
-      (toNumberOrNull(entry.sampelSensory) || 0) +
-      (toNumberOrNull(entry.sampelMingguan) || 0) +
-      (toNumberOrNull(entry.sampelHarian) || 0)
-    );
-  }
-  return 0;
-}
-
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
@@ -159,11 +142,38 @@ function dashLabel(v) {
   return n === null ? "-" : n;
 }
 
+function computeTotalButir(entry) {
+  if (entry.type === "riset") {
+    return (
+      sumValues(entry.rmd) +
+      sumValues(entry.rmm) +
+      sumValues(entry.incoming) +
+      sumValues(entry.mpd) +
+      (entry.wmProduksi ? toNumberOrNull(entry.wmButir) || 0 : 0)
+    );
+  }
+  if (entry.type === "verifikasi") {
+    return sumValues(entry.rmd) + sumValues(entry.mpd);
+  }
+  if (entry.type === "total") {
+    return (
+      (toNumberOrNull(entry.rmdTotal) || 0) +
+      (toNumberOrNull(entry.sampelTimbang) || 0) +
+      (toNumberOrNull(entry.sampelSensory) || 0) +
+      (toNumberOrNull(entry.sampelMingguan) || 0) +
+      (toNumberOrNull(entry.sampelHarian) || 0)
+    );
+  }
+  return 0;
+}
+
 /* ---- Generator teks laporan, format meniru lembar/WA asli ---- */
 function generateRisetText(e) {
   const hari = (e.hari || hariFromTanggal(e.tanggal)).toUpperCase();
   const tgl = formatDDMMYYYY(e.tanggal);
   const rmdLines = RISET_RMD_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.rmd?.[item])} butir`).join("\n");
+  const rmmLines = RISET_RMM_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.rmm?.[item])} butir`).join("\n");
+  const incomingLines = RISET_INCOMING_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.incoming?.[item])} butir`).join("\n");
   const mpdLines = RISET_MPD_ITEMS.map((item) => `${item} \u27a1\ufe0f ${zeroLabel(e.mpd?.[item])} butir`).join("\n");
   const wmLine = e.wmProduksi ? `Produksi \u27a1\ufe0f ${zeroLabel(e.wmButir)} butir` : "# (TIDAK PRODUKSI)";
   return `DATA SAMPLING QAD-QIN
@@ -173,6 +183,10 @@ Total personil : ${e.personil ?? 0} orang
 Riset shift : ${e.shift}
   \u2713RMD
 ${rmdLines}
+  \u2713RMM Nanas
+${rmmLines}
+  \u2713Incoming Bahan Baku
+${incomingLines}
    \u2713MPD
 ${mpdLines}
 \u2713WM H.JASRI
@@ -181,13 +195,16 @@ ${wmLine}`;
 
 function generateVerifikasiText(e) {
   const tgl = formatDDMMYYYY(e.tanggal);
-  const lines = VERIFIKASI_RMD_ITEMS.map((item) => `${item} : ${dashLabel(e.rmd?.[item])} Butir`).join("\n");
+  const rmdLines = VERIFIKASI_RMD_ITEMS.map((item) => `${item} : ${dashLabel(e.rmd?.[item])} Butir`).join("\n");
+  const mpdLines = VERIFIKASI_MPD_ITEMS.map((item) => `${item} : ${dashLabel(e.mpd?.[item])} Butir`).join("\n");
   return `Data sampling QAD/QIN
 Hari/Tanggal : ${tgl}
 Total Personil : ${e.personil ?? 0} orang
 Verifikasi Shift : ${(e.shift || "").toLowerCase()}
 *RMD
-${lines}`;
+${rmdLines}
+*MPD
+${mpdLines}`;
 }
 
 function generateTotalText(e) {
@@ -232,8 +249,6 @@ async function copyText(text) {
   }
 }
 
-// Firestore membatasi ukuran dokumen ~1MB, jadi gambar background dikompres
-// & diperkecil dulu sebelum diubah ke base64 dan disimpan.
 function compressImageFile(file, maxDimension = 1600, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -267,7 +282,7 @@ function compressImageFile(file, maxDimension = 1600, quality = 0.72) {
 export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [fbUser, setFbUser] = useState(null);
-  const [profile, setProfile] = useState(null); // {username, role}
+  const [profile, setProfile] = useState(null);
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
 
   const [page, setPage] = useState("dashboard");
@@ -366,7 +381,7 @@ export default function App() {
 
   const bgStyle = background
     ? {
-      backgroundImage: `linear-gradient(rgba(243,242,238,0.90), rgba(243,242,238,0.94)), url(${background})`,
+      backgroundImage: `linear-gradient(rgba(243,242,238,0.5), rgba(243,242,238,0.6)), url(${background})`,
       backgroundSize: "cover",
       backgroundPosition: "center",
       backgroundAttachment: "fixed",
@@ -925,10 +940,62 @@ function BackgroundSettings({ background, onUpdateBackground, showToast }) {
 }
 
 /* ---------------------------------------------------------------
+   REPORT MODAL (klik entri untuk lihat & salin teks laporan)
+----------------------------------------------------------------*/
+function ReportModal({ entry, onClose }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    const ok = await copyText(generateReportText(entry));
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(20,20,18,0.45)", display: "grid", placeItems: "center", zIndex: 100, padding: 16 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 8, maxWidth: 480, width: "100%", maxHeight: "82vh", overflow: "auto", padding: 20, position: "relative" }}
+      >
+        <button
+          onClick={onClose}
+          style={{ position: "absolute", top: 12, right: 12, border: "none", background: "transparent", cursor: "pointer", padding: 4 }}
+        >
+          <X size={18} color={C.inkSoft} />
+        </button>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>Detail Laporan</div>
+        <pre
+          className="mono"
+          style={{ whiteSpace: "pre-wrap", fontSize: 12.5, lineHeight: 1.6, background: C.paper, padding: 12, borderRadius: 6, border: `1px solid ${C.line}`, margin: 0 }}
+        >
+          {generateReportText(entry)}
+        </pre>
+        <button
+          onClick={handleCopy}
+          style={{
+            marginTop: 14, display: "flex", alignItems: "center", gap: 6,
+            background: copied ? C.green : C.ink, color: "#fff", border: "none", borderRadius: 6,
+            padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+          }}
+        >
+          {copied ? (<><Check size={14} /> Disalin</>) : (<><Copy size={14} /> Salin teks</>)}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    DASHBOARD
 ----------------------------------------------------------------*/
 function Dashboard({ entries, loading, onDelete, onNew }) {
-  const [period, setPeriod] = useState("week"); // week | month | all
+  const [period, setPeriod] = useState("week");
+  const [selectedEntry, setSelectedEntry] = useState(null);
 
   const filtered = useMemo(() => {
     if (period === "all") return entries;
@@ -1039,8 +1106,9 @@ function Dashboard({ entries, loading, onDelete, onNew }) {
           </div>
 
           <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, overflow: "hidden" }}>
-            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.line}`, fontWeight: 600, fontSize: 14 }}>
-              Entri terbaru
+            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.line}`, fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span>Entri terbaru</span>
+              <span style={{ fontWeight: 400, fontSize: 11.5, color: C.inkSoft }}>Klik baris untuk lihat & salin teks laporan</span>
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -1055,7 +1123,11 @@ function Dashboard({ entries, loading, onDelete, onNew }) {
                   {recent.map((e) => {
                     const meta = REPORT_TYPES[e.type];
                     return (
-                      <tr key={e.id} style={{ borderTop: `1px solid ${C.line}` }}>
+                      <tr
+                        key={e.id}
+                        onClick={() => setSelectedEntry(e)}
+                        style={{ borderTop: `1px solid ${C.line}`, cursor: "pointer" }}
+                      >
                         <td style={tdStyle}>{formatTanggalPendek(e.tanggal)}<div style={{ fontSize: 11, color: C.inkSoft }}>{e.hari}</div></td>
                         <td style={tdStyle}>
                           <span style={{ background: meta.accentSoft, color: meta.accent, padding: "2px 8px", borderRadius: 4, fontSize: 11.5, fontWeight: 600 }}>
@@ -1066,7 +1138,11 @@ function Dashboard({ entries, loading, onDelete, onNew }) {
                         <td style={{ ...tdStyle }} className="mono">{(e.totalButir || 0).toLocaleString("id-ID")} butir</td>
                         <td style={tdStyle}>{e.createdBy}</td>
                         <td style={{ ...tdStyle, textAlign: "right" }}>
-                          <button onClick={() => onDelete(e.id)} style={{ border: "none", background: "transparent", cursor: "pointer", color: C.inkSoft }} title="Hapus">
+                          <button
+                            onClick={(ev) => { ev.stopPropagation(); onDelete(e.id); }}
+                            style={{ border: "none", background: "transparent", cursor: "pointer", color: C.inkSoft }}
+                            title="Hapus"
+                          >
                             <Trash2 size={14} />
                           </button>
                         </td>
@@ -1079,6 +1155,8 @@ function Dashboard({ entries, loading, onDelete, onNew }) {
           </div>
         </>
       )}
+
+      {selectedEntry && <ReportModal entry={selectedEntry} onClose={() => setSelectedEntry(null)} />}
     </div>
   );
 }
@@ -1122,6 +1200,22 @@ function ChartPanel({ title, children }) {
   );
 }
 
+function EmptyState({ onNew }) {
+  return (
+    <div style={{ background: C.panel, border: `1px dashed ${C.line}`, borderRadius: 8, padding: "60px 20px", textAlign: "center" }}>
+      <TrendingUp size={28} color={C.inkSoft} style={{ marginBottom: 10 }} />
+      <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Belum ada data sampling</div>
+      <div style={{ fontSize: 13, color: C.inkSoft, marginBottom: 16 }}>Mulai catat data sampling shift pertama hari ini.</div>
+      <button onClick={onNew} style={{ background: C.green, color: "#fff", border: "none", borderRadius: 6, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+        Isi data sekarang
+      </button>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   SALIN LAPORAN HARIAN
+----------------------------------------------------------------*/
 function DailyCopySection({ entries }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [copiedId, setCopiedId] = useState(null);
@@ -1194,19 +1288,6 @@ function DailyCopySection({ entries }) {
   );
 }
 
-function EmptyState({ onNew }) {
-  return (
-    <div style={{ background: C.panel, border: `1px dashed ${C.line}`, borderRadius: 8, padding: "60px 20px", textAlign: "center" }}>
-      <TrendingUp size={28} color={C.inkSoft} style={{ marginBottom: 10 }} />
-      <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Belum ada data sampling</div>
-      <div style={{ fontSize: 13, color: C.inkSoft, marginBottom: 16 }}>Mulai catat data sampling shift pertama hari ini.</div>
-      <button onClick={onNew} style={{ background: C.green, color: "#fff", border: "none", borderRadius: 6, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-        Isi data sekarang
-      </button>
-    </div>
-  );
-}
-
 /* ---------------------------------------------------------------
    INPUT FORM
 ----------------------------------------------------------------*/
@@ -1219,11 +1300,14 @@ function InputForm({ onSubmit }) {
   const [shift, setShift] = useState("PAGI");
 
   const [rmdRiset, setRmdRiset] = useState({});
+  const [rmmRiset, setRmmRiset] = useState({});
+  const [incoming, setIncoming] = useState({});
   const [mpdRiset, setMpdRiset] = useState({});
   const [wmProduksi, setWmProduksi] = useState(false);
   const [wmButir, setWmButir] = useState("");
 
   const [rmdVerif, setRmdVerif] = useState({});
+  const [mpdVerif, setMpdVerif] = useState({});
 
   const [rmdTotal, setRmdTotal] = useState("");
   const [sampelTimbang, setSampelTimbang] = useState("");
@@ -1232,8 +1316,8 @@ function InputForm({ onSubmit }) {
   const [sampelHarian, setSampelHarian] = useState("");
 
   function resetTypeFields() {
-    setRmdRiset({}); setMpdRiset({}); setWmProduksi(false); setWmButir("");
-    setRmdVerif({});
+    setRmdRiset({}); setRmmRiset({}); setIncoming({}); setMpdRiset({}); setWmProduksi(false); setWmButir("");
+    setRmdVerif({}); setMpdVerif({});
     setRmdTotal(""); setSampelTimbang(""); setSampelSensory(""); setSampelMingguan(""); setSampelHarian("");
   }
 
@@ -1243,9 +1327,9 @@ function InputForm({ onSubmit }) {
 
     let entry;
     if (type === "riset") {
-      entry = { ...base, shift, rmd: rmdRiset, mpd: mpdRiset, wmProduksi, wmButir };
+      entry = { ...base, shift, rmd: rmdRiset, rmm: rmmRiset, incoming, mpd: mpdRiset, wmProduksi, wmButir };
     } else if (type === "verifikasi") {
-      entry = { ...base, shift, rmd: rmdVerif };
+      entry = { ...base, shift, rmd: rmdVerif, mpd: mpdVerif };
     } else {
       entry = { ...base, rmdTotal, sampelTimbang, sampelSensory, sampelMingguan, sampelHarian };
     }
@@ -1254,8 +1338,8 @@ function InputForm({ onSubmit }) {
   }
 
   const previewTotal = computeTotalButir(
-    type === "riset" ? { type, rmd: rmdRiset, mpd: mpdRiset, wmProduksi, wmButir }
-      : type === "verifikasi" ? { type, rmd: rmdVerif }
+    type === "riset" ? { type, rmd: rmdRiset, rmm: rmmRiset, incoming, mpd: mpdRiset, wmProduksi, wmButir }
+      : type === "verifikasi" ? { type, rmd: rmdVerif, mpd: mpdVerif }
         : { type, rmdTotal, sampelTimbang, sampelSensory, sampelMingguan, sampelHarian }
   );
 
@@ -1309,11 +1393,17 @@ function InputForm({ onSubmit }) {
             <SectionHeader accent={C.green} label="RMD" />
             <ItemGrid items={RISET_RMD_ITEMS} values={rmdRiset} setValues={setRmdRiset} />
 
+            <SectionHeader accent={C.green} label="RMM Nanas" />
+            <ItemGrid items={RISET_RMM_ITEMS} values={rmmRiset} setValues={setRmmRiset} />
+
+            <SectionHeader accent={C.slate} label="Incoming Bahan Baku" />
+            <ItemGrid items={RISET_INCOMING_ITEMS} values={incoming} setValues={setIncoming} />
+
             <SectionHeader accent={C.green} label="MPD" />
             <ItemGrid items={RISET_MPD_ITEMS} values={mpdRiset} setValues={setMpdRiset} />
 
             <SectionHeader accent={C.slate} label="WM H. JASRI" />
-            <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 6 }}>
+            <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
                 <input type="radio" checked={!wmProduksi} onChange={() => setWmProduksi(false)} /> Tidak produksi
               </label>
@@ -1335,6 +1425,9 @@ function InputForm({ onSubmit }) {
           <>
             <SectionHeader accent={C.amber} label="RMD" />
             <ItemGrid items={VERIFIKASI_RMD_ITEMS} values={rmdVerif} setValues={setRmdVerif} allowDash />
+
+            <SectionHeader accent={C.amber} label="MPD" />
+            <ItemGrid items={VERIFIKASI_MPD_ITEMS} values={mpdVerif} setValues={setMpdVerif} allowDash />
           </>
         )}
 
@@ -1351,7 +1444,7 @@ function InputForm({ onSubmit }) {
           </>
         )}
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 22, paddingTop: 18, borderTop: `1px solid ${C.line}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 22, paddingTop: 18, borderTop: `1px solid ${C.line}`, flexWrap: "wrap", gap: 12 }}>
           <div style={{ fontSize: 13, color: C.inkSoft }}>
             Total butir: <span className="mono" style={{ color: C.ink, fontWeight: 600, fontSize: 15 }}>{previewTotal.toLocaleString("id-ID")}</span>
           </div>
